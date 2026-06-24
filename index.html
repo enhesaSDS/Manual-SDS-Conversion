@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SDS Conversion Request Portal</title>
+
+  <!--
+  ============================================================
+  SDS CONVERSION REQUEST PORTAL
+  ============================================================
+  Version: Clipboard / Claude.ai Project edition
+  
+  HOW THIS VERSION WORKS:
+  This file has NO direct API call and requires NO backend.
+  It collects request details via a 4-step form, assembles
+  a structured request text, and copies it to the clipboard.
+  
+  The coordinator then:
+    1. Opens a new conversation in the Claude.ai Project
+    2. Attaches the three files
+    3. Pastes the copied request text
+    4. Sends — Claude (with Project instructions loaded) runs
+       the full conversion, section 8/15 population, and QC
+
+  SAFE TO HOST ON GITHUB PAGES:
+  - No API keys anywhere in this file
+  - No data sent to any server
+  - No cookies, tracking, or storage
+  - File contents never leave the browser
+  - Form data exists only in browser memory during the session
+
+  FOR DEV TEAM — FUTURE INTEGRATION:
+  When you are ready to wire up a direct API call so Claude
+  runs the conversion inside this portal (rather than via
+  Claude.ai), the integration points are:
+
+  1. Add a backend proxy endpoint (e.g. POST /api/sds-convert)
+     that accepts the assembled JSON payload, appends your
+     Anthropic API key from an environment variable, and
+     forwards to https://api.anthropic.com/v1/messages.
+     NEVER put the API key in this client-side file.
+
+  2. In submitRequest() below, replace the copyToClipboard()
+     call with a fetch() to your proxy endpoint, passing:
+     - The assembled prompt text
+     - File contents as base64-encoded document blocks
+     Then stream or display the response in the result area.
+
+  3. For file handling:
+     - PDFs: read as base64, send as type "document"
+     - XLSX/CSV: read as base64, send as type "document"
+     - Claude parses them server-side to extract OEL/BEI rows
+
+  4. For embedding in your SDS authoring software:
+     - WebView / iframe: load this file in a panel or tab
+     - Electron: load as a BrowserView
+     - Framework port: extract form logic into React/Vue/etc.
+  ============================================================
+  -->
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #ffffff;
+      --bg2:         #f7f7f5;
+      --bg3:         #f0f0ed;
+      --text:        #1a1a18;
+      --text2:       #6b6b66;
+      --text3:       #9b9b96;
+      --border:      rgba(0,0,0,0.11);
+      --border2:     rgba(0,0,0,0.20);
+      --accent:      #1a1a18;
+      --accent-fg:   #ffffff;
+      --navy:        #1B2A4A;
+      --teal:        #0F6E56;
+      --info-bg:     #e8f0fb;
+      --info-text:   #1a4a8a;
+      --success-bg:  #e8f5ee;
+      --success-text:#1a6b3a;
+      --warn-bg:     #fdf3e3;
+      --warn-text:   #8a5a0a;
+      --danger-text: #8a1a1a;
+      --radius:      8px;
+      --radius-lg:   12px;
+      --font:        -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --mono:        'SF Mono', 'Fira Code', Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:          #1c1c1a;
+        --bg2:         #252523;
+        --bg3:         #2e2e2b;
+        --text:        #f0f0ec;
+        --text2:       #a0a09a;
+        --text3:       #6a6a64;
+        --border:      rgba(255,255,255,0.09);
+        --border2:     rgba(255,255,255,0.17);
+        --accent:      #f0f0ec;
+        --accent-fg:   #1c1c1a;
+        --navy:        #4a7ab5;
+        --teal:        #3ab88a;
+        --info-bg:     #162340;
+        --info-text:   #7aaaf0;
+        --success-bg:  #102a1c;
+        --success-text:#60c080;
+        --warn-bg:     #2a1e08;
+        --warn-text:   #e0a040;
+        --danger-text: #e07070;
+      }
+    }
+
+    html, body {
+      font-family: var(--font);
+      background: var(--bg3);
+      color: var(--text);
+      min-height: 100vh;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    /* ── Shell ── */
+    .shell {
+      display: grid;
+      grid-template-columns: 210px 1fr;
+      grid-template-rows: 54px 1fr;
+      min-height: 100vh;
+    }
+
+    .topbar {
+      grid-column: 1/-1;
+      background: var(--bg);
+      border-bottom: 0.5px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 1.5rem;
+      gap: 10px;
+    }
+    .topbar-logo { font-size: 14px; font-weight: 600; color: var(--text); letter-spacing: -0.2px; }
+    .topbar-sep  { color: var(--text3); }
+    .topbar-sub  { font-size: 13px; color: var(--text2); }
+
+    .sidebar {
+      background: var(--bg);
+      border-right: 0.5px solid var(--border);
+      padding: 1.25rem 0;
+    }
+    .nav-section {
+      padding: 0 1rem .4rem;
+      font-size: 10.5px;
+      font-weight: 600;
+      color: var(--text3);
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      margin-top: 1rem;
+    }
+    .nav-section:first-child { margin-top: 0; }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 1rem;
+      font-size: 13px;
+      color: var(--text2);
+      cursor: pointer;
+      border-left: 2px solid transparent;
+      transition: background .12s, color .12s;
+    }
+    .nav-item:hover { background: var(--bg2); color: var(--text); }
+    .nav-item.active { color: var(--text); font-weight: 500; border-left-color: var(--accent); background: var(--bg2); }
+
+    .main { padding: 2rem; overflow-y: auto; }
+
+    .page { display: none; }
+    .page.active { display: block; }
+
+    /* ── Page header ── */
+    .page-hdr { margin-bottom: 1.5rem; }
+    .page-hdr h1 { font-size: 20px; font-weight: 600; }
+    .page-hdr p  { font-size: 13px; color: var(--text2); margin-top: 4px; }
+
+    /* ── Progress & tabs ── */
+    .pbar { height: 3px; background: var(--border); border-radius: 2px; margin-bottom: 1.4rem; }
+    .pfill { height: 100%; border-radius: 2px; background: var(--accent); transition: width .3s; }
+
+    .tabs {
+      display: flex;
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-bottom: 1.4rem;
+    }
+    .tab {
+      flex: 1;
+      padding: 8px 4px;
+      font-size: 12px;
+      text-align: center;
+      color: var(--text3);
+      background: var(--bg2);
+      border-right: 0.5px solid var(--border);
+    }
+    .tab:last-child { border-right: none; }
+    .tab.active { background: var(--bg); color: var(--text); font-weight: 600; }
+    .tab.done   { background: var(--success-bg); color: var(--success-text); }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--bg);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+    }
+    .card-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 1rem;
+    }
+
+    /* ── Form ── */
+    .fg { margin-bottom: 1.1rem; }
+    .fg:last-child { margin-bottom: 0; }
+    .fl { display: block; font-size: 13px; font-weight: 500; margin-bottom: 5px; }
+    .fh { display: block; font-size: 12px; color: var(--text2); margin-bottom: 7px; line-height: 1.45; }
+
+    input[type=text], select, textarea {
+      width: 100%;
+      font-size: 13px;
+      font-family: var(--font);
+      padding: 8px 10px;
+      border: 0.5px solid var(--border2);
+      border-radius: var(--radius);
+      background: var(--bg);
+      color: var(--text);
+      outline: none;
+      transition: border-color .15s;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+    textarea { resize: vertical; min-height: 76px; line-height: 1.5; }
+
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+
+    /* ── Upload zones ── */
+    .uzone {
+      position: relative;
+      border: 1px dashed var(--border2);
+      border-radius: var(--radius);
+      padding: 1rem;
+      text-align: center;
+      cursor: pointer;
+      background: var(--bg2);
+      transition: border-color .15s;
+    }
+    .uzone:hover { border-color: var(--accent); }
+    .uzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+    .uzone-icon { font-size: 22px; margin-bottom: 6px; opacity: .4; }
+    .uzone p  { font-size: 13px; color: var(--text2); }
+    .uzone .uh { font-size: 11px; color: var(--text3); margin-top: 4px; }
+
+    .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: var(--info-bg);
+      color: var(--info-text);
+      border-radius: 20px;
+      padding: 3px 10px;
+      font-size: 12px;
+    }
+    .pill button {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--info-text);
+      font-size: 14px;
+      line-height: 1;
+      padding: 0;
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-family: var(--font);
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-weight: 500;
+      border: 0.5px solid var(--border2);
+      background: var(--bg);
+      color: var(--text);
+      transition: background .12s;
+    }
+    .btn:hover { background: var(--bg2); }
+    .btn.pri   { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+    .btn.pri:hover { opacity: .85; background: var(--accent); }
+    .btn.green { background: var(--success-bg); color: var(--success-text); border-color: var(--success-text); }
+    .btn:disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
+
+    .acts { display: flex; justify-content: space-between; align-items: center; margin-top: 1.25rem; }
+
+    /* ── Summary rows ── */
+    .srow {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding: 8px 0;
+      border-bottom: 0.5px solid var(--border);
+      font-size: 13px;
+    }
+    .srow:last-child { border-bottom: none; }
+    .slbl { color: var(--text2); width: 160px; flex-shrink: 0; }
+    .sval { color: var(--text); text-align: right; }
+
+    .badge-info { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 500; background: var(--info-bg); color: var(--info-text); }
+
+    /* ── QC list ── */
+    .qclist { list-style: none; }
+    .qclist li {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text2);
+      padding: 7px 0;
+      border-bottom: 0.5px solid var(--border);
+      line-height: 1.45;
+    }
+    .qclist li:last-child { border-bottom: none; }
+    .qi { flex-shrink: 0; margin-top: 1px; }
+    .ok { color: var(--success-text); }
+    .wn { color: var(--warn-text); }
+
+    /* ── Note block ── */
+    .note {
+      background: var(--warn-bg);
+      border-left: 3px solid var(--warn-text);
+      padding: 8px 12px;
+      border-radius: 0 var(--radius) var(--radius) 0;
+      font-size: 12px;
+      color: var(--warn-text);
+      line-height: 1.5;
+      margin-top: 10px;
+    }
+
+    /* ── Confirm panel ── */
+    .confirm {
+      background: var(--success-bg);
+      border: 0.5px solid var(--success-text);
+      border-radius: var(--radius-lg);
+      padding: 1.5rem;
+      text-align: center;
+    }
+    .confirm-icon { font-size: 36px; color: var(--success-text); margin-bottom: .75rem; }
+    .confirm h2 { font-size: 17px; font-weight: 500; margin-bottom: 8px; }
+    .confirm p  { font-size: 13px; color: var(--text2); line-height: 1.6; max-width: 400px; margin: 0 auto 1.25rem; }
+
+    .steps-box {
+      text-align: left;
+      background: var(--bg);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.25rem;
+      font-size: 13px;
+      color: var(--text2);
+    }
+    .steps-box .step-line { display: flex; gap: 10px; padding: 5px 0; }
+    .steps-box .step-num  { font-weight: 700; color: var(--navy); flex-shrink: 0; width: 20px; }
+    .steps-box .step-txt  { color: var(--text2); }
+    .steps-box .step-txt b { color: var(--text); }
+
+    /* ── Guide page ── */
+    .guide-section { margin-bottom: 1.5rem; }
+    .guide-section h2 { font-size: 15px; font-weight: 600; color: var(--teal); margin-bottom: .5rem; }
+    .guide-section p, .guide-section li { font-size: 13px; color: var(--text2); line-height: 1.7; }
+    .guide-section ul { padding-left: 1.2rem; }
+    .guide-section li { margin-bottom: 4px; }
+
+    /* ── History ── */
+    .hist-item {
+      background: var(--bg);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 1rem 1.25rem;
+      margin-bottom: .75rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .hist-meta { font-size: 12px; color: var(--text2); margin-top: 3px; }
+
+    /* ── Utility ── */
+    .hidden { display: none !important; }
+
+    @media (max-width: 680px) {
+      .shell { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .main { padding: 1rem; }
+      .row2 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- Top bar -->
+  <header class="topbar">
+    <!-- Update "SDS Services" to your company/team name -->
+    <span class="topbar-logo">SDS Services</span>
+    <span class="topbar-sep">/</span>
+    <span class="topbar-sub">Conversion Portal</span>
+  </header>
+
+  <!-- Sidebar -->
+  <nav class="sidebar" aria-label="Navigation">
+    <div class="nav-section">Requests</div>
+    <div class="nav-item active" id="nav-new" onclick="showPage('new')">
+      ＋ New request
+    </div>
+    <div class="nav-item" id="nav-history" onclick="showPage('history')">
+      ⏱ History
+    </div>
+    <div class="nav-section">Reference</div>
+    <div class="nav-item" id="nav-guide" onclick="showPage('guide')">
+      📄 Usage guide
+    </div>
+  </nav>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- ══════════════════════════════════════════
+         PAGE: NEW REQUEST
+    ══════════════════════════════════════════ -->
+    <div class="page active" id="page-new">
+      <div class="page-hdr">
+        <h1>New conversion request</h1>
+        <p>Fill in all four steps, then copy the formatted request to paste into a new Claude.ai conversation.</p>
+      </div>
+
+      <div class="pbar"><div class="pfill" id="pf" style="width:25%"></div></div>
+      <div class="tabs">
+        <div class="tab active" id="tab-1">1 · Product &amp; scope</div>
+        <div class="tab" id="tab-2">2 · Files</div>
+        <div class="tab" id="tab-3">3 · Notes &amp; QC</div>
+        <div class="tab" id="tab-4">4 · Copy &amp; submit</div>
+      </div>
+
+      <!-- Step 1 -->
+      <div id="step-1">
+        <div class="card">
+          <div class="card-title">Request details</div>
+          <div class="row2">
+            <div class="fg">
+              <label class="fl" for="f-req">Requestor name</label>
+              <input type="text" id="f-req" placeholder="Your name" />
+            </div>
+            <div class="fg">
+              <label class="fl" for="f-cli">Client / project</label>
+              <input type="text" id="f-cli" placeholder="e.g. Acme Corp – Q2 batch" />
+            </div>
+          </div>
+          <div class="fg">
+            <label class="fl" for="f-prod">Product name</label>
+            <input type="text" id="f-prod" placeholder="As it appears on the SDS" />
+          </div>
+          <div class="row2">
+            <div class="fg">
+              <label class="fl" for="f-src">Source jurisdiction</label>
+              <span class="fh">Selected in the authoring software</span>
+              <select id="f-src">
+                <option value="">Select…</option>
+                <option>Brazil</option>
+                <option>China</option>
+                <option>Japan</option>
+                <option>Australia</option>
+                <option>EU</option>
+                <option>United States</option>
+                <option>Canada</option>
+              </select>
+            </div>
+            <div class="fg">
+              <label class="fl" for="f-tgt">Target jurisdiction</label>
+              <span class="fh">The final SDS jurisdiction</span>
+              <input type="text" id="f-tgt" placeholder="e.g. South Korea, Mexico, UAE" />
+            </div>
+          </div>
+          <div class="row2">
+            <div class="fg">
+              <label class="fl" for="f-reg">Target regulation / standard</label>
+              <span class="fh">Optional — also visible in the template</span>
+              <input type="text" id="f-reg" placeholder="e.g. K-OSHA, NOM-018-STPS" />
+            </div>
+            <div class="fg">
+              <label class="fl" for="f-pri">Priority</label>
+              <select id="f-pri">
+                <option>Standard</option>
+                <option>Urgent</option>
+                <option>Rush</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="acts">
+          <span></span>
+          <button class="btn pri" onclick="goTo(2)">Next: files →</button>
+        </div>
+      </div>
+
+      <!-- Step 2 -->
+      <div id="step-2" class="hidden">
+        <div class="card">
+          <div class="card-title">Authored SDS</div>
+          <span class="fh">PDF or DOCX export from the authoring software.</span>
+          <div class="uzone">
+            <input type="file" accept=".pdf,.docx" onchange="addFile(this,'sds','pills-sds')" />
+            <div class="uzone-icon">📄</div>
+            <p>Click or drag — authored SDS</p>
+            <p class="uh">PDF or DOCX · max 25 MB</p>
+          </div>
+          <div class="pills" id="pills-sds"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Target jurisdiction template</div>
+          <span class="fh">The template for the target jurisdiction — section 15 inventory framework is pre-populated in the template.</span>
+          <div class="uzone">
+            <input type="file" accept=".docx,.dotx,.pdf" onchange="addFile(this,'tmpl','pills-tmpl')" />
+            <div class="uzone-icon">📋</div>
+            <p>Click or drag — jurisdiction template</p>
+            <p class="uh">DOCX, DOTX or PDF</p>
+          </div>
+          <div class="pills" id="pills-tmpl"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Section 8 &amp; 15 data</div>
+          <span class="fh">XLSX or CSV export from your data provider. Multiple files allowed.</span>
+          <div class="uzone">
+            <input type="file" accept=".xlsx,.csv" multiple onchange="addFiles(this,'data','pills-data')" />
+            <div class="uzone-icon">📊</div>
+            <p>Click or drag — data files</p>
+            <p class="uh">XLSX or CSV · multiple files allowed</p>
+          </div>
+          <div class="pills" id="pills-data"></div>
+          <div class="note">
+            Enter CAS numbers in the next step so Claude can extract the right rows from a multi-substance export. Format must match your data file exactly (e.g. 67-63-0).
+          </div>
+        </div>
+
+        <div class="acts">
+          <button class="btn" onclick="goTo(1)">← Back</button>
+          <button class="btn pri" onclick="goTo(3)">Next: notes &amp; QC →</button>
+        </div>
+      </div>
+
+      <!-- Step 3 -->
+      <div id="step-3" class="hidden">
+        <div class="card">
+          <div class="card-title">Conversion notes</div>
+          <div class="fg">
+            <label class="fl" for="f-cas">CAS numbers / substance names</label>
+            <span class="fh">One per line. Use CAS numbers where possible — must match your data export exactly.</span>
+            <textarea id="f-cas" style="min-height:64px" placeholder="67-63-0&#10;Isopropanol&#10;78-93-3"></textarea>
+          </div>
+          <div class="fg">
+            <label class="fl" for="f-notes">Special instructions</label>
+            <span class="fh">Unit preferences, inapplicable sections, section 14 transport modes, anything unusual.</span>
+            <textarea id="f-notes" placeholder="e.g. Section 7 storage temps in Celsius only. Road transport only for section 14."></textarea>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">QC scope — what Claude will check</div>
+          <ul class="qclist">
+            <li><span class="qi ok">✓</span><span>All SDS sections present and correctly numbered per target jurisdiction</span></li>
+            <li><span class="qi ok">✓</span><span>Section 8 OELs and BEIs populated from uploaded data files</span></li>
+            <li><span class="qi ok">✓</span><span>Section 15 — template inventory framework retained exactly; listing status populated from data files</span></li>
+            <li><span class="qi ok">✓</span><span>Classification language, GHS elements, and signal words aligned to target jurisdiction</span></li>
+            <li><span class="qi ok">✓</span><span>Units, date formats, and terminology correct for target jurisdiction</span></li>
+            <li><span class="qi ok">✓</span><span>No source-jurisdiction content carried over without adaptation</span></li>
+            <li><span class="qi wn">⚠</span><span>Section 1 supplier info &amp; emergency contact — <strong>left blank, manual step</strong></span></li>
+            <li><span class="qi wn">⚠</span><span>Customer logo — <strong>placeholder inserted, manual step</strong></span></li>
+            <li><span class="qi wn">⚠</span><span>Revision date / version — <strong>left blank, manual step</strong></span></li>
+          </ul>
+        </div>
+
+        <div class="acts">
+          <button class="btn" onclick="goTo(2)">← Back</button>
+          <button class="btn pri" onclick="goTo(4)">Review &amp; copy →</button>
+        </div>
+      </div>
+
+      <!-- Step 4 -->
+      <div id="step-4" class="hidden">
+
+        <div id="review-panel">
+          <div class="card">
+            <div class="card-title">Request summary</div>
+            <div id="sum-rows"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">Files to attach in Claude.ai</div>
+            <div id="sum-files"></div>
+          </div>
+
+          <div class="acts" style="flex-direction:column;align-items:stretch;gap:8px">
+            <button class="btn pri" onclick="copyRequest()" id="copy-btn">
+              📋 Copy formatted request to clipboard
+            </button>
+            <button class="btn" onclick="goTo(3)" style="text-align:center">← Back to edit</button>
+          </div>
+          <p style="font-size:11px;color:var(--text3);margin-top:10px;line-height:1.5">
+            After copying, open a <strong>new conversation</strong> in the Claude.ai Project, attach your three files, paste the request, and send.
+          </p>
+        </div>
+
+        <div id="confirm-panel" class="confirm hidden">
+          <div class="confirm-icon">✅</div>
+          <h2>Request copied to clipboard</h2>
+          <p>Now go to the Claude.ai Project and follow these steps:</p>
+          <div class="steps-box">
+            <div class="step-line"><span class="step-num">1</span><span class="step-txt"><b>Click "New conversation"</b> in the project sidebar</span></div>
+            <div class="step-line"><span class="step-num">2</span><span class="step-txt"><b>Attach the three files</b> using the paperclip button — authored SDS, template, data file(s)</span></div>
+            <div class="step-line"><span class="step-num">3</span><span class="step-txt"><b>Paste</b> the copied request (Ctrl/Cmd + V)</span></div>
+            <div class="step-line"><span class="step-num">4</span><span class="step-txt"><b>Send</b> — Claude will handle the conversion, section 8/15 population, and QC</span></div>
+          </div>
+          <button class="btn green" onclick="resetForm()">＋ Start another request</button>
+        </div>
+
+      </div>
+    </div><!-- /page-new -->
+
+
+    <!-- ══════════════════════════════════════════
+         PAGE: HISTORY
+    ══════════════════════════════════════════ -->
+    <div class="page" id="page-history">
+      <div class="page-hdr">
+        <h1>Request history</h1>
+        <p>Requests submitted in this browser session. History resets when you close or refresh the page.</p>
+      </div>
+      <div id="hist-list">
+        <p style="font-size:13px;color:var(--text3)">No requests submitted yet in this session.</p>
+      </div>
+    </div>
+
+
+    <!-- ══════════════════════════════════════════
+         PAGE: GUIDE
+    ══════════════════════════════════════════ -->
+    <div class="page" id="page-guide">
+      <div class="page-hdr">
+        <h1>Usage guide</h1>
+        <p>How to prepare and submit a conversion request.</p>
+      </div>
+
+      <div class="card">
+        <div class="guide-section">
+          <h2>How this works</h2>
+          <p>This portal collects your request details and formats them into a structured message for Claude. When you click "Copy formatted request", that text goes to your clipboard. You then open a <strong>new conversation</strong> in the SDS Conversion Claude.ai Project, attach your three files, paste the request, and send. Claude — with the project's conversion instructions loaded — runs the full conversion, populates sections 8 and 15 from your data files, and returns a QC report.</p>
+        </div>
+
+        <div class="guide-section">
+          <h2>The three files you need</h2>
+          <ul>
+            <li><strong>Authored SDS</strong> — PDF or DOCX export from the authoring software</li>
+            <li><strong>Target jurisdiction template</strong> — from your template library; the section 15 inventory framework is already pre-populated in the template</li>
+            <li><strong>Section 8 &amp; 15 data</strong> — XLSX or CSV export from your data provider; multi-substance exports are fine</li>
+          </ul>
+        </div>
+
+        <div class="guide-section">
+          <h2>CAS numbers</h2>
+          <p>Always include CAS numbers in the request form, one per line. They must match the format in your data export exactly (e.g. <code style="font-family:var(--mono);font-size:12px;background:var(--bg2);padding:1px 5px;border-radius:4px">67-63-0</code> not <code style="font-family:var(--mono);font-size:12px;background:var(--bg2);padding:1px 5px;border-radius:4px">676300</code>). This is how Claude finds the right rows in your data file.</p>
+        </div>
+
+        <div class="guide-section">
+          <h2>What Claude does — and doesn't — do</h2>
+          <ul>
+            <li>✓ Converts the SDS into the target jurisdiction template</li>
+            <li>✓ Populates section 8 OELs and BEIs from your data files</li>
+            <li>✓ Populates section 15 listing status using the template's inventory framework</li>
+            <li>✓ QCs classification language, GHS elements, units, and terminology</li>
+            <li>✓ Flags data gaps and items needing manual completion</li>
+            <li>✗ Does not invent regulatory data — gaps become [DATA GAP] placeholders</li>
+            <li>✗ Does not translate into other languages — flags if required</li>
+            <li>✗ Does not fill in supplier info, logo, or revision date — always manual steps</li>
+          </ul>
+        </div>
+
+        <div class="guide-section">
+          <h2>Each request gets its own conversation</h2>
+          <p>Always start a <strong>new conversation</strong> in the project for each conversion request. This keeps each SDS in its own clean thread, making it easier to find, review, and track. Name the conversation with the product name and target jurisdiction for easy reference.</p>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+  // ── State ──────────────────────────────────────────────────
+  const S = {
+    step: 1,
+    files: { sds: [], tmpl: [], data: [] },
+    history: []
+  };
+
+  // ── Navigation ─────────────────────────────────────────────
+  function showPage(name) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.getElementById('page-' + name).classList.add('active');
+    document.getElementById('nav-' + name).classList.add('active');
+  }
+
+  function goTo(n) {
+    document.getElementById('step-' + S.step).classList.add('hidden');
+    document.getElementById('step-' + n).classList.remove('hidden');
+    for (let i = 1; i <= 4; i++) {
+      const t = document.getElementById('tab-' + i);
+      t.className = 'tab' + (i === n ? ' active' : i < n ? ' done' : '');
+    }
+    document.getElementById('pf').style.width = (n / 4 * 100) + '%';
+    S.step = n;
+    if (n === 4) buildSummary();
+  }
+
+  // ── File handling ──────────────────────────────────────────
+  function addFile(input, key, pillsId) {
+    const f = input.files[0];
+    if (!f) return;
+    S.files[key] = [f];
+    renderPills(pillsId, S.files[key], key);
+  }
+
+  function addFiles(input, key, pillsId) {
+    S.files[key].push(...Array.from(input.files));
+    renderPills(pillsId, S.files[key], key);
+  }
+
+  function removeFile(key, idx, pillsId) {
+    S.files[key].splice(idx, 1);
+    renderPills(pillsId, S.files[key], key);
+  }
+
+  function renderPills(id, files, key) {
+    document.getElementById(id).innerHTML =
+      '<div class="pills">' +
+      files.map((f, i) =>
+        `<span class="pill">📎 ${f.name} <button onclick="removeFile('${key}',${i},'${id}')" aria-label="Remove">×</button></span>`
+      ).join('') +
+      '</div>';
+  }
+
+  // ── Field helper ───────────────────────────────────────────
+  function v(id) { return (document.getElementById(id) || {}).value || ''; }
+
+  // ── Summary ────────────────────────────────────────────────
+  function buildSummary() {
+    const rows = [
+      ['Requestor',         v('f-req')],
+      ['Client / project',  v('f-cli')],
+      ['Product name',      v('f-prod')],
+      ['Source jurisdiction', v('f-src')],
+      ['Target jurisdiction', v('f-tgt')],
+      ['Target regulation', v('f-reg') || '—'],
+      ['Priority',          v('f-pri')],
+      ['CAS / substances',  v('f-cas').replace(/\n/g, ', ') || '—'],
+    ];
+    document.getElementById('sum-rows').innerHTML = rows.map(([l, val]) =>
+      `<div class="srow">
+        <span class="slbl">${l}</span>
+        <span class="sval">${val || '<span style="color:var(--danger-text);font-size:12px">Not provided</span>'}</span>
+      </div>`
+    ).join('');
+
+    const sections = [
+      { label: 'Authored SDS',          key: 'sds' },
+      { label: 'Jurisdiction template', key: 'tmpl' },
+      { label: 'Section 8 & 15 data',  key: 'data' },
+    ];
+    document.getElementById('sum-files').innerHTML = sections.map(s =>
+      `<div class="srow">
+        <span class="slbl">${s.label}</span>
+        <span class="sval">${
+          S.files[s.key].length
+            ? S.files[s.key].map(f => `<span class="badge-info">${f.name}</span>`).join(' ')
+            : '<span style="color:var(--warn-text);font-size:12px">⚠ No file named yet — attach in Claude.ai</span>'
+        }</span>
+      </div>`
+    ).join('');
+  }
+
+  // ── Build request text ─────────────────────────────────────
+  function buildRequestText() {
+    const cas   = v('f-cas').trim();
+    const notes = v('f-notes').trim();
+    const sdsF  = S.files.sds.map(f  => f.name).join(', ') || '[attach authored SDS]';
+    const tmplF = S.files.tmpl.map(f => f.name).join(', ') || '[attach jurisdiction template]';
+    const dataF = S.files.data.map(f => f.name).join(', ') || '[attach section 8 & 15 data]';
+
+    let t = 'SDS CONVERSION REQUEST\n\n';
+    t += `Requestor: ${v('f-req') || '[name]'}\n`;
+    t += `Client / Project: ${v('f-cli') || '[client]'}\n`;
+    t += `Product: ${v('f-prod') || '[product name]'}\n`;
+    t += `Source jurisdiction (authored in): ${v('f-src') || '[jurisdiction]'}\n`;
+    t += `Target jurisdiction (final SDS): ${v('f-tgt') || '[jurisdiction]'}\n`;
+    if (v('f-reg')) t += `Target regulation / standard: ${v('f-reg')}\n`;
+    t += `Priority: ${v('f-pri')}\n`;
+    if (cas) {
+      t += `\nKey substances / CAS numbers:\n`;
+      cas.split('\n').forEach(line => { if (line.trim()) t += `  ${line.trim()}\n`; });
+    }
+    if (notes) t += `\nSpecial instructions:\n${notes}\n`;
+    t += `\nFiles attached:\n`;
+    t += `- Authored SDS: ${sdsF}\n`;
+    t += `- Target jurisdiction template: ${tmplF}\n`;
+    t += `- Section 8 & 15 data: ${dataF}\n`;
+    return t;
+  }
+
+  // ── Copy & confirm ─────────────────────────────────────────
+  function copyRequest() {
+    const text = buildRequestText();
+    const doConfirm = () => {
+      document.getElementById('review-panel').classList.add('hidden');
+      document.getElementById('confirm-panel').classList.remove('hidden');
+      logHistory();
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(doConfirm).catch(() => fallbackCopy(text, doConfirm));
+    } else {
+      fallbackCopy(text, doConfirm);
+    }
+  }
+
+  function fallbackCopy(text, cb) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) { console.warn('Copy failed', e); }
+    document.body.removeChild(ta);
+    cb();
+  }
+
+  // ── History ────────────────────────────────────────────────
+  function logHistory() {
+    S.history.unshift({
+      ts:       new Date().toLocaleString(),
+      product:  v('f-prod'),
+      src:      v('f-src'),
+      tgt:      v('f-tgt'),
+      req:      v('f-req'),
+      priority: v('f-pri'),
+    });
+    const el = document.getElementById('hist-list');
+    el.innerHTML = S.history.map(h =>
+      `<div class="hist-item">
+        <div>
+          <div style="font-size:14px;font-weight:500">${h.product || 'Unnamed product'}</div>
+          <div class="hist-meta">${h.src} → ${h.tgt} &nbsp;·&nbsp; ${h.req || 'unknown'} &nbsp;·&nbsp; ${h.priority} &nbsp;·&nbsp; ${h.ts}</div>
+        </div>
+        <span style="font-size:11px;background:var(--success-bg);color:var(--success-text);padding:2px 8px;border-radius:20px;font-weight:500">Copied</span>
+      </div>`
+    ).join('');
+  }
+
+  // ── Reset ──────────────────────────────────────────────────
+  function resetForm() {
+    ['f-req','f-cli','f-prod','f-src','f-tgt','f-reg','f-cas','f-notes'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    S.files = { sds: [], tmpl: [], data: [] };
+    ['pills-sds','pills-tmpl','pills-data'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.innerHTML = '';
+    });
+    document.getElementById('confirm-panel').classList.add('hidden');
+    document.getElementById('review-panel').classList.remove('hidden');
+    goTo(1);
+  }
+</script>
+</body>
+</html>
